@@ -38,6 +38,7 @@ export const moviesAPI = {
   getGenres: () => api.get("/genres"),
 
   getByGenre: (genreId, page = 1) => api.get(`/genre/${genreId}?page=${page}`),
+  
 };
 
 // --- RECOMMENDATIONS ---
@@ -55,12 +56,14 @@ export const recommendationsAPI = {
   getTvSimilar: (id) => api.get(`/tv/${id}/similar`),
 };
 
-// --- USERS / WATCHLIST ---
+// services/api.js dosyasındaki userAPI objesine şunu ekle:
+
 export const userAPI = {
+  // ... diğerleri
   toggleWatchlist: (data) => api.post("/users/watchlist/toggle", data),
+  toggleFavorite: (data) => api.post("/users/favorites/toggle", data), // <-- YENİ
   getProfile: () => api.get("/users/profile"), 
 };
-
 // --- AI (Gemini) ---
 export const aiAPI = {
   recommend: (payload) => api.post("/ai/recommend", payload),

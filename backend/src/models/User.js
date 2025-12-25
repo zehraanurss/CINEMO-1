@@ -39,7 +39,17 @@ const userSchema = new mongoose.Schema(
       ],
       default: [],
     },
-    
+    // --- YENİ EKLENECEK KISIM: FAVORİLER ---
+  favorites: [
+    {
+      tmdbId: { type: String, required: true },
+      title: String,
+      posterPath: String,
+      voteAverage: Number,
+      addedAt: { type: Date, default: Date.now },
+    },
+  ],
+  // ---------------------------------------
     // Kullanıcının izleme geçmişi ve değerlendirmeleri
     watchHistory: {
       type: [
