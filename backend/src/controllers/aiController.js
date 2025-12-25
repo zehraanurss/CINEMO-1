@@ -82,16 +82,20 @@ exports.chatRecommendation = async (req, res) => {
       console.warn("TMDB search fallback failed:", e.message || e);
     }
 
-    // dynamicMovies zaten `tmdbService.search` içinde veritabanına upsert ediliyor;
-    // bu yüzden kullanıcıya özel recentSearches'e yazmak yerine filmleri `movies` koleksiyonunda tutuyoruz.
-
-    // Veritabanı bağlamı oluştur
-    // Birleştirilmiş bağlam: önce dinamik arama sonuçları (varsa), sonra popüler filmler
+  
     const movieListForContext = [];
+    
+    // Yardımcı fonksiyon: Özeti temizle ve kısalt (Çok uzun özetler token limitini doldurmasın)
+    const formatMovie = (m) => {
+      const summary = m.overview ? m.overview.substring(0, 200) + "..." : "Özet bilgisi yok";
+      const genres = m.genres?.map((g) => g.name).join(", ") || "Tür belirtilmemiş";
+      return `- ${m.title} (Puan: ${m.voteAverage}/10, Tür: ${genres})\n  Konu: ${summary}`;
+    };
+
     if (dynamicMovies.length > 0) {
       movieListForContext.push("Aranan filme ilişkin TMDB sonuçları:");
       dynamicMovies.forEach((m) => {
-        movieListForContext.push(`- ${m.title} (Rating: ${m.voteAverage}/10, Türler: ${m.genres?.map((g) => g.name).join(", ") || "N/A"})`);
+        movieListForContext.push(formatMovie(m));
       });
       movieListForContext.push("\n---\n");
     }
@@ -99,11 +103,13 @@ exports.chatRecommendation = async (req, res) => {
     movieListForContext.push("Veritabanında bulunan popüler filmler:");
     if (popularMovies && popularMovies.length > 0) {
       popularMovies.forEach((m) => {
-        movieListForContext.push(`- ${m.title} (Rating: ${m.voteAverage}/10, Türler: ${m.genres?.map((g) => g.name).join(", ") || "N/A"})`);
+        movieListForContext.push(formatMovie(m));
       });
     } else {
       movieListForContext.push("Veritabanında henüz film yok. Genel öneriler yap.");
     }
+    
+    // --- GÜNCELLEME BİTİŞİ ---
 
     const dbContext = `\n${movieListForContext.join("\n")}\n\nKullanıcı Profili:\n- Ad: ${user?.name || "Misafir"}\n- İzleme Geçmişi: ${user?.watchHistory?.length || 0} film\n- Ratings: ${user?.ratings?.length || 0} değerlendirme${user?.aiPreferences?.genres?.length > 0 ? `\n- Tercih edilen türler: ${user.aiPreferences.genres.join(", ")}` : ""}`.trim();
 
@@ -119,7 +125,43 @@ exports.chatRecommendation = async (req, res) => {
     });
 
     // Mesajı bağlam ile gönder
-    const fullMessage = `${geminiSystemPrompts.chatAssistant}\n\n${dbContext}\n\nKullanıcı: ${message}`;
+    // const fullMessage = `${geminiSystemPrompts.chatAssistant}\n\n${dbContext}\n\nKullanıcı: ${message}`;
+
+    // --- GÜNCELLEME: AKILLI ÖNERİ PROMPTU ---
+
+    // 1. Kullanıcının son izlediklerini alalım (Hafıza)
+    const historySummary = user.watchHistory && user.watchHistory.length > 0
+      ? user.watchHistory.slice(-5).map(m => m.title).join(", ")
+      : "Henüz geçmiş yok";
+
+    // 2. Gelişmiş Prompt Tasarımı
+    const detailedInstruction = `
+    GÖREV: Kullanıcıya film önerisi yap.
+    
+    KULLANICI PROFİLİ:
+    - Son İzledikleri: [${historySummary}]
+    - Kullanıcı Mesajı: "${message}"
+
+    KURALLAR:
+    1. Sadece film ismi verme, **neden** önerdiğini kullanıcının geçmişiyle ilişkilendir.
+       (Örnek: "Interstellar'ı sevdiğin için bunu da seveceksin...")
+    2. Filmin "Vibe"ını (Atmosferini) tek kelimeyle parantez içinde belirt. 
+       (Örnek: 🌌 Melankolik Bilim Kurgu)
+    3. Eğer veritabanındaki listede (yukarıdaki context) uygun film yoksa, kendi genel kültürünü kullan.
+    4. Cevabı şu formatta ver:
+       
+       🎬 **Film Adı (Yıl)** - (Atmosfer)
+       ✨ **Neden Önerdim:** [Kısa ve ikna edici açıklama]
+       ⚠️ **Uyarı:** [Varsa şiddet, yavaş tempo vb. uyarısı, yoksa "Aileye uygun" de]
+
+    Samimi ve akıcı bir Türkçe kullan.
+    `;
+
+    // Mesajı bağlam ile gönder
+    const fullMessage = `${geminiSystemPrompts.chatAssistant}\n\n${dbContext}\n\n${detailedInstruction}`;
+    
+    // --- GÜNCELLEME SONU ---
+
     const result = await chat.sendMessage(fullMessage);
     const responseText = result.response.text();
 
