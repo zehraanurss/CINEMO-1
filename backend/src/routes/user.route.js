@@ -1,17 +1,19 @@
 const express = require("express");
 const router = express.Router();
-const { toggleWatchlist, getProfile } = require("../controllers/user.controller");
-// Auth middleware'ini (token kontrolü için) import etmeyi unutma
-// (Dosya yolu sende farklı olabilir, kontrol et: middleware/auth.js gibi)
-const { protect } = require("../middleware/auth"); 
+const { protect } = require("../middleware/auth"); // Auth middleware'in
 
-// NOT: Senin middleware ismin 'verifyToken' veya 'protect' olabilir.
-// Auth route'larında ne kullanıyorsan onu kullan. Ben örnek olarak 'protect' dedim.
+// Controller importlarını güncelle (toggleFavorite'i ekle)
+const { 
+  getProfile, 
+  toggleWatchlist, 
+  toggleFavorite
+} = require("../controllers/user.controller");
 
-// Endpoint: /api/users/watchlist/toggle
+router.get("/profile", protect, getProfile);
 router.post("/watchlist/toggle", protect, toggleWatchlist);
 
-// Endpoint: /api/users/profile
-router.get("/profile", protect, getProfile);
+// --- YENİ ROTA ---
+router.post("/favorites/toggle", protect, toggleFavorite);
+// -----------------
 
 module.exports = router;

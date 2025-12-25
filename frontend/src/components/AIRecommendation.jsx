@@ -11,12 +11,17 @@ export default function AIRecommendation() {
   const [loading, setLoading] = useState(false);
 
   const chatEndRef = useRef(null);
-  const scrollToBottom = () => chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+ const scrollToBottom = () => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  };
 
-  useEffect(() => {
-    scrollToBottom();
+ useEffect(() => {
+    // Sadece sohbet geçmişi varsa veya loading durumundaysa aşağı kaydır.
+    // Böylece sayfa ilk açıldığında (chat boşken) en alta atmaz.
+    if (chat.length > 0 || loading) {
+      scrollToBottom();
+    }
   }, [chat, loading]);
-
   const send = async (e) => {
     e.preventDefault();
     if (!message.trim()) return;
@@ -82,31 +87,34 @@ export default function AIRecommendation() {
               }}
             />
 
-            {/* Header */}
-           {/* Header: px-6 ve py-5 ideal boşluğu sağlar */}
-<div className="relative flex items-center justify-between gap-4 border-b border-white/10 bg-black/35 px-6 pt-10 pb-2">
+{/* Header: px-6 yatay ferahlık, py-5 dikey denge sağlar */}
+<div className="relative flex items-center justify-between gap-4 border-b border-white/10 bg-black/35 px-6 py-5">
   <div>
-    {/* h1'e 'leading-tight' ekleyerek metin bloğunu sıkılaştırdık */}
-    <h1 className="flex items-center gap-2 text-lg sm:text-xl font-bold leading-tight">
-      {/* İkon kutusu */}
-      <span className="grid h-10 w-10 place-items-center ">
-        ✨
-      </span>
-      AI Recommendation
-    </h1>
-    <p className="mt-1.5  text-sm text-white/60">
-      Merhaba <span className="text-white font-medium">{user?.name}</span>, bugün ne izlemek istersin?
+    <h1 className="flex items-center gap-3 text-lg sm:text-xl font-bold leading-tight text-white/90">
+  {/* Kutu stillerini kaldırdık, sadece boyut verdik */}
+  <span className="text-2xl">
+    ✨
+  </span>
+  AI Recommendation
+</h1>
+    {/* Alt metin */}
+    <p className="mt-1 ml-1 text-sm text-white/50">
+      Merhaba <span className="text-white/80 font-medium">{user?.name}</span>, bugün ne izlemek istersin?
     </p>
   </div>
 
   {/* Sağdaki Etiket */}
-  <div className="hidden sm:flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70">
-    <span className="text-purple-300 animate-pulse">•</span> Akıllı öneri modu
+  <div className="hidden sm:flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-medium text-white/60 shadow-inner">
+    <span className="relative flex h-2 w-2">
+      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
+      <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
+    </span>
+    Akıllı öneri modu
   </div>
 </div>
 
             {/* Chat body */}
-            <div className="relative h-[62vh] overflow-y-auto px-6 py-6 space-y-5 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+            <div className="relative h-[62vh] overflow-y-auto px-6 py-6 space-y-5 custom-scrollbar">
               {chat.length === 0 && !loading && (
                 <div className="grid h-full place-items-center">
                   <div className="text-center">
@@ -275,12 +283,6 @@ export default function AIRecommendation() {
         </div>
       </main>
 
-      <style>{`
-        @keyframes cDemoShimmer {
-          0% { background-position: 0% 50%; }
-          100% { background-position: 200% 50%; }
-        }
-      `}</style>
     </div>
     </div>
   );

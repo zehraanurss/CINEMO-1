@@ -8,6 +8,8 @@ import AIRecommendation from "./components/AIRecommendation";
 import Profile from "./pages/Profile"; 
 import Loading from "./components/Loading";
 import CategoryPage from './pages/CategoryPage';
+import SearchPage from "./pages/SearchPage";
+
 
 const AppRoutes = () => {
   const { isAuthenticated, loading } = useAuth();
@@ -43,6 +45,8 @@ const AppRoutes = () => {
 
         {/* Public AI Page */}
         <Route path="/ai-recommendations" element={<AIRecommendation />} />
+
+        <Route path="/search" element={<SearchPage />} />
         
         <Route 
           path="/profile" 

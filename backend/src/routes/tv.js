@@ -1,9 +1,12 @@
+// backend/routes/tv.js Örneği:
 const router = require("express").Router();
-const { getTvDetails, getTvSimilar } = require("../controllers/tvController");
+const { getTvDetails, getTvSimilar, getAllTvShows } = require("../controllers/tvController");
 
-// Detay rotası
+// ÖNCE Discover rotası (yoksa :id bunu ezer)
+router.get("/discover", getAllTvShows);
+
+// SONRA ID gerektiren rotalar
 router.get("/:id", getTvDetails);
-// Benzerler rotası
 router.get("/:id/similar", getTvSimilar);
 
 module.exports = router;

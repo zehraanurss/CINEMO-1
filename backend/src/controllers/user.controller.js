@@ -20,66 +20,75 @@ exports.getProfile = async (req, res) => {
   }
 };
 
-// --- 2. FONKSİYON: Listeye Ekle / Çıkar (Toggle) ---
-exports.toggleWatchlist = async (req, res) => {
+/// --- YENİ FONKSİYON: FAVORİ EKLE/ÇIKAR ---
+exports.toggleFavorite = async (req, res, next) => {
   try {
-    const userId = req.user.id;
-    let { tmdbId, title, posterPath, voteAverage } = req.body;
-
-    // --- KRİTİK GÜVENLİK KONTROLÜ ---
-    // Eğer frontend'den tmdbId boş veya 'NaN' gelirse işlemi durdur.
-    // Bu sayede sunucunun çökmesini engelleriz.
-    if (!tmdbId || isNaN(Number(tmdbId))) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Geçersiz Film ID. Veri okunamadı." 
-      });
-    }
-    // -------------------------------
+    const { tmdbId, title, posterPath, voteAverage } = req.body;
+    const userId = req.user.id; // Auth middleware'den gelir
 
     const user = await User.findById(userId);
+
     if (!user) {
       return res.status(404).json({ success: false, message: "Kullanıcı bulunamadı" });
     }
 
-    // Gelen ID'yi sayıya çevir
-    const movieIdNum = Number(tmdbId);
-
-    // Listede var mı kontrol et
-    const existingIndex = user.watchlist.findIndex(
-      (item) => item.tmdbId === movieIdNum
+    // Favorilerde var mı kontrol et
+    const existingIndex = user.favorites.findIndex(
+      (item) => item.tmdbId.toString() === tmdbId.toString()
     );
 
-    if (existingIndex > -1) {
-      // --- VARSA LİSTEDEN SİL (REMOVE) ---
-      user.watchlist.splice(existingIndex, 1);
+    if (existingIndex !== -1) {
+      // Varsa çıkar
+      user.favorites.splice(existingIndex, 1);
       await user.save();
-      
-      return res.status(200).json({
-        success: true,
-        message: "Listeden çıkarıldı",
-        watchlist: user.watchlist
-      });
+      return res.status(200).json({ success: true, message: "Favorilerden çıkarıldı", favorites: user.favorites });
     } else {
-      // --- YOKSA LİSTEYE EKLE (ADD) ---
-      user.watchlist.push({
-        tmdbId: movieIdNum,
-        title,
-        posterPath,
-        // Puan yoksa veya hatalıysa varsayılan olarak 0 ver
-        voteAverage: Number(voteAverage) || 0 
-      });
+      // Yoksa ekle
+      // (İsteğe bağlı: Eklenecek film watchlist'te var mı diye kontrol edebilirsin, 
+      // ama frontend zaten bunu engelliyor.)
+      user.favorites.push({ tmdbId, title, posterPath, voteAverage });
       await user.save();
-
-      return res.status(200).json({
-        success: true,
-        message: "Listeye eklendi",
-        watchlist: user.watchlist
-      });
+      return res.status(200).json({ success: true, message: "Favorilere eklendi", favorites: user.favorites });
     }
-
   } catch (error) {
-    console.error("Watchlist Hatası:", error);
-    res.status(500).json({ success: false, message: "Sunucu hatası" });
+    next(error);
+  }
+};
+
+// --- MEVCUT TOGGLE WATCHLIST GÜNCELLENMELİ ---
+// Mantık: Eğer izleme listesinden siliyorsak, favorilerden de silmeliyiz.
+exports.toggleWatchlist = async (req, res, next) => {
+  try {
+    const { tmdbId, title, posterPath, voteAverage } = req.body;
+    const userId = req.user.id;
+
+    const user = await User.findById(userId);
+
+    const existingIndex = user.watchlist.findIndex(
+      (item) => item.tmdbId.toString() === tmdbId.toString()
+    );
+
+    if (existingIndex !== -1) {
+      // LİSTEDEN ÇIKARMA İŞLEMİ
+      user.watchlist.splice(existingIndex, 1);
+
+      // --- EKSTRA GÜVENLİK ---
+      // Eğer listeden çıkıyorsa, favorilerden de otomatik çıkaralım
+      const favIndex = user.favorites.findIndex(f => f.tmdbId.toString() === tmdbId.toString());
+      if (favIndex !== -1) {
+        user.favorites.splice(favIndex, 1);
+      }
+      // -----------------------
+
+      await user.save();
+      return res.status(200).json({ success: true, message: "Listeden çıkarıldı" });
+    } else {
+      // LİSTEYE EKLEME İŞLEMİ
+      user.watchlist.push({ tmdbId, title, posterPath, voteAverage });
+      await user.save();
+      return res.status(200).json({ success: true, message: "Listeye eklendi" });
+    }
+  } catch (error) {
+    next(error);
   }
 };
