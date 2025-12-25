@@ -2,26 +2,54 @@ const tmdbAxios = require("../config/tmdb");
 const Movie = require("../models/Movie");
 
 class TMDBService {
-  // Gelen verileri veritabanına kaydetme ve formatlama yardımcısı
-  async saveMoviesToDB(results = []) {
-    if (!Array.isArray(results)) return [];
+  // --- Helpers ---
+  normalizeMediaType(item, fallback = null) {
+    if (item?.media_type) return item.media_type;
+    if (fallback) return fallback;
+    // trending/all'da bazen media_type gelmez; first_air_date varsa tv kabul edelim
+    return item?.first_air_date ? "tv" : "movie";
+  }
 
-    const mapped = results.map((m) => ({
+  mapGenres(item) {
+    // 1) Detay endpoint'i: genres: [{id,name}]
+    if (Array.isArray(item?.genres) && item.genres.length) {
+      return item.genres.map(g => ({ id: g.id, name: g.name || "" }));
+    }
+    // 2) Liste endpoint'i: genre_ids: [id]
+    if (Array.isArray(item?.genre_ids) && item.genre_ids.length) {
+      return item.genre_ids.map(id => ({ id, name: "" }));
+    }
+    return [];
+  }
+
+  mapListItemToDoc(m, forcedMediaType = null) {
+    const mediaType = this.normalizeMediaType(m, forcedMediaType);
+
+    return {
       tmdbId: m.id,
       title: m.title || m.name || "Untitled",
       overview: m.overview || "",
       posterPath: m.poster_path || "",
       backdropPath: m.backdrop_path || "",
-      genres: (m.genre_ids || []).map((id) => ({ id, name: String(id) })), 
-      // genre name'leri detay isteğinde dolacak, şimdilik id string koyduk
+      genres: this.mapGenres(m),
       releaseDate: m.release_date || m.first_air_date || "",
-      mediaType: m.media_type || (m.first_air_date ? "tv" : "movie"),
+      mediaType,
       voteAverage: m.vote_average || 0,
       voteCount: m.vote_count || 0,
       popularity: m.popularity || 0,
-    }));
+      // runtime yalnız detayda dolacak
+      runtime: m.runtime ?? null,
+    };
+  }
 
-    // Veritabanına "Upsert" işlemi (Varsa güncelle, yoksa ekle)
+  async saveMoviesToDB(results = [], forcedMediaType = null) {
+    if (!Array.isArray(results)) return [];
+
+    const mapped = results
+      .filter(Boolean)
+      .map(m => this.mapListItemToDoc(m, forcedMediaType));
+
+    // Upsert
     for (const item of mapped) {
       await Movie.updateOne(
         { tmdbId: item.tmdbId },
@@ -33,130 +61,174 @@ class TMDBService {
     return mapped;
   }
 
-  // --- SAYFALAMA DESTEĞİ EKLENMİŞ METODLAR ---
+  // --- LIST / FEED METODS (sayfalama var) ---
 
-  // Trendler (Sayfa numarası eklendi)
+  // Trendler: film + dizi
   async getTrending(page = 1) {
-    const res = await tmdbAxios.get("/trending/movie/week", {
-      params: { page } // Axios otomatik olarak ?page=X ekler
+    const res = await tmdbAxios.get("/trending/all/week", {
+      params: { page, language: "tr-TR" }
     });
     return this.saveMoviesToDB(res.data.results);
   }
 
-  // Popüler Filmler (Sayfa numarası eklendi)
+  // Popüler Filmler
   async getPopular(page = 1) {
     const res = await tmdbAxios.get("/movie/popular", {
-      params: { page }
+      params: { page, language: "tr-TR" }
     });
-    return this.saveMoviesToDB(res.data.results);
+    return this.saveMoviesToDB(res.data.results, "movie");
   }
 
-  // En Yüksek Puanlılar (Sayfa numarası eklendi)
+  // En yüksek puanlı filmler
   async getTopRated(page = 1) {
     const res = await tmdbAxios.get("/movie/top_rated", {
-      params: { page }
+      params: { page, language: "tr-TR" }
     });
-    return this.saveMoviesToDB(res.data.results);
+    return this.saveMoviesToDB(res.data.results, "movie");
   }
 
-  // Popüler Diziler (Sayfa numarası eklendi)
+  // Popüler Diziler
   async getSeries(page = 1) {
     const res = await tmdbAxios.get("/tv/popular", {
-      params: { page }
+      params: { page, language: "tr-TR" }
     });
-    return this.saveMoviesToDB(res.data.results);
+    return this.saveMoviesToDB(res.data.results, "tv");
   }
 
-  // --- DİĞER METODLAR ---
+  // --- DETAILS / RECOMMENDATION ENDPOINTS ---
 
-  async getMovieDetails(id) {
-    const res = await tmdbAxios.get(`/movie/${id}`);
+  // Tek fonksiyonla movie/tv detay
+  async getDetails(mediaType, id) {
+    const type = mediaType === "tv" ? "tv" : "movie";
+
+    const res = await tmdbAxios.get(`/${type}/${id}`, {
+      params: {
+        language: "tr-TR",
+        append_to_response: "keywords,credits"
+      }
+    });
+
     const m = res.data;
 
-    const movieDoc = {
+    const doc = {
       tmdbId: m.id,
-      title: m.title || "Untitled",
+      title: m.title || m.name || "Untitled",
       overview: m.overview || "",
       posterPath: m.poster_path || "",
       backdropPath: m.backdrop_path || "",
-      genres: (m.genres || []).map((g) => ({ id: g.id, name: g.name })),
-      releaseDate: m.release_date || "",
-      mediaType: "movie",
+      genres: this.mapGenres(m), // burada genres[{id,name}] dolu olur
+      releaseDate: m.release_date || m.first_air_date || "",
+      mediaType: type,
       voteAverage: m.vote_average || 0,
       voteCount: m.vote_count || 0,
       popularity: m.popularity || 0,
-      runtime: m.runtime || null,
+      runtime: m.runtime ?? (Array.isArray(m.episode_run_time) ? (m.episode_run_time[0] ?? null) : null),
+
+      // İstersen DB'de saklamak için aç:
+      // keywords: (type === "movie" ? (m.keywords?.keywords || []) : (m.keywords?.results || []))
+      //   .map(k => ({ id: k.id, name: k.name })),
+      // castIds: (m.credits?.cast || []).slice(0, 10).map(c => c.id),
+      // directorId: (() => {
+      //   if (type === "movie") return (m.credits?.crew || []).find(x => x.job === "Director")?.id || null;
+      //   // tv: created_by var, crew'de director her bölümde farklı olabilir
+      //   return (m.created_by || [])[0]?.id || null;
+      // })(),
     };
 
     await Movie.updateOne(
-      { tmdbId: movieDoc.tmdbId },
-      { $set: movieDoc },
+      { tmdbId: doc.tmdbId },
+      { $set: doc },
       { upsert: true }
     );
 
-    return movieDoc;
+    return doc;
   }
 
-  async search(query) {
-    // Hem film hem dizi araması yap
+  // Geriye uyumluluk: eski movie detay
+  async getMovieDetails(id) {
+    return this.getDetails("movie", id);
+  }
+
+  // /{type}/{id}/recommendations
+  async getRecommendations(mediaType, id, page = 1) {
+    const type = mediaType === "tv" ? "tv" : "movie";
+
+    try {
+      const res = await tmdbAxios.get(`/${type}/${id}/recommendations`, {
+        params: { page, language: "tr-TR" }
+      });
+
+      // recommendation results'ta media_type gelmeyebilir -> forced
+      return this.saveMoviesToDB(res.data.results, type);
+    } catch (error) {
+      console.warn(`Recommendations error for ${type} ID ${id}:`, error.message);
+      return [];
+    }
+  }
+
+  // /{type}/{id}/similar
+  async getSimilar(mediaType, id, page = 1) {
+    const type = mediaType === "tv" ? "tv" : "movie";
+
+    try {
+      const res = await tmdbAxios.get(`/${type}/${id}/similar`, {
+        params: { page, language: "tr-TR" }
+      });
+
+      return this.saveMoviesToDB(res.data.results, type);
+    } catch (error) {
+      console.warn(`Similar error for ${type} ID ${id}:`, error.message);
+      return [];
+    }
+  }
+
+  // Eski fonksiyon dursun
+  async getSimilarMovies(id) {
+    return this.getSimilar("movie", id);
+  }
+
+  // --- SEARCH ---
+
+  async search(query, page = 1) {
     const [movieRes, tvRes] = await Promise.all([
-      tmdbAxios.get("/search/movie", { params: { query } }),
-      tmdbAxios.get("/search/tv", { params: { query } })
+      tmdbAxios.get("/search/movie", { params: { query, page, language: "tr-TR" } }),
+      tmdbAxios.get("/search/tv", { params: { query, page, language: "tr-TR" } })
     ]);
 
     const movieResults = movieRes.data.results || [];
     const tvResults = tvRes.data.results || [];
 
-    // Film sonuçlarına media_type ekle
-    const moviesWithType = movieResults.map(m => ({ ...m, media_type: 'movie' }));
-    // Dizi sonuçlarına media_type ekle
-    const tvWithType = tvResults.map(t => ({ ...t, media_type: 'tv' }));
+    const moviesWithType = movieResults.map(m => ({ ...m, media_type: "movie" }));
+    const tvWithType = tvResults.map(t => ({ ...t, media_type: "tv" }));
 
-    // Tüm sonuçları birleştir
     const allResults = [...moviesWithType, ...tvWithType];
 
-    // Popülariteye göre sırala
     allResults.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
 
-    // İlk 20 sonucu al
     const topResults = allResults.slice(0, 20);
 
-    // Veritabanına kaydet
     await this.saveMoviesToDB(topResults);
 
-    return topResults.map(item => ({
-      tmdbId: item.id,
-      title: item.title || item.name || "Untitled",
-      overview: item.overview || "",
-      posterPath: item.poster_path || "",
-      backdropPath: item.backdrop_path || "",
-      genres: (item.genre_ids || []).map((id) => ({ id, name: String(id) })),
-      releaseDate: item.release_date || item.first_air_date || "",
-      mediaType: item.media_type || "movie",
-      voteAverage: item.vote_average || 0,
-      voteCount: item.vote_count || 0,
-      popularity: item.popularity || 0,
-    }));
+    // API response formatı olarak da mapleyelim
+    return topResults.map(item => this.mapListItemToDoc(item));
   }
+
+  // --- GENRES ---
 
   async getGenres() {
     try {
       const [movieGenres, tvGenres] = await Promise.all([
-        tmdbAxios.get("/genre/movie/list", { params: { language: 'tr' } }),
-        tmdbAxios.get("/genre/tv/list", { params: { language: 'tr' } })
+        tmdbAxios.get("/genre/movie/list", { params: { language: "tr-TR" } }),
+        tmdbAxios.get("/genre/tv/list", { params: { language: "tr-TR" } })
       ]);
 
-      // Film ve dizi türlerini birleştir ve tekrarları kaldır
       const allGenres = [
-        ...movieGenres.data.genres,
-        ...tvGenres.data.genres
+        ...(movieGenres.data.genres || []),
+        ...(tvGenres.data.genres || [])
       ];
 
-      // Tekrarları kaldır (id'ye göre)
       const uniqueGenres = allGenres.reduce((acc, genre) => {
-        if (!acc.find(g => g.id === genre.id)) {
-          acc.push(genre);
-        }
+        if (!acc.find(g => g.id === genre.id)) acc.push(genre);
         return acc;
       }, []);
 
@@ -167,68 +239,70 @@ class TMDBService {
     }
   }
 
-  async searchByGenre(genreId, mediaType = "all") {
+  // --- DISCOVER (GENEL) ---
+  // RecommendationService’in kullanabilmesi için:
+  // tmdbService.discover('movie', { with_genres:'..', 'vote_average.gte': 6, page:1 })
+  async discover(mediaType, params = {}) {
+    const type = mediaType === "tv" ? "tv" : "movie";
     try {
+      const res = await tmdbAxios.get(`/discover/${type}`, {
+        params: {
+          language: "tr-TR",
+          sort_by: "popularity.desc",
+          page: 1,
+          ...params
+        }
+      });
+      return this.saveMoviesToDB(res.data.results, type);
+    } catch (error) {
+      console.warn(`Discover error for ${type}:`, error.message);
+      return [];
+    }
+  }
+
+  // Genre bazlı arama (senin eski fonksiyonun)
+  async searchByGenre(genreId, mediaType = "all", opts = {}) {
+    try {
+      const { page = 1, minVote = null, sortBy = "popularity.desc" } = opts;
+
       let results = [];
 
       if (mediaType === "all" || mediaType === "movie") {
         const movieRes = await tmdbAxios.get("/discover/movie", {
-          params: { 
+          params: {
             with_genres: genreId,
-            language: 'tr',
-            sort_by: 'popularity.desc'
+            language: "tr-TR",
+            sort_by: sortBy,
+            page,
+            ...(minVote != null ? { "vote_average.gte": minVote } : {})
           }
         });
-        const moviesWithType = movieRes.data.results.map(m => ({ ...m, media_type: 'movie' }));
+        const moviesWithType = (movieRes.data.results || []).map(m => ({ ...m, media_type: "movie" }));
         results = [...results, ...moviesWithType];
       }
 
       if (mediaType === "all" || mediaType === "tv") {
         const tvRes = await tmdbAxios.get("/discover/tv", {
-          params: { 
+          params: {
             with_genres: genreId,
-            language: 'tr',
-            sort_by: 'popularity.desc'
+            language: "tr-TR",
+            sort_by: sortBy,
+            page,
+            ...(minVote != null ? { "vote_average.gte": minVote } : {})
           }
         });
-        const tvWithType = tvRes.data.results.map(t => ({ ...t, media_type: 'tv' }));
+        const tvWithType = (tvRes.data.results || []).map(t => ({ ...t, media_type: "tv" }));
         results = [...results, ...tvWithType];
       }
 
-      // Popülariteye göre sırala ve ilk 20'yi al
       results.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
       const topResults = results.slice(0, 20);
 
-      // Veritabanına kaydet
       await this.saveMoviesToDB(topResults);
 
-      return topResults.map(item => ({
-        tmdbId: item.id,
-        title: item.title || item.name || "Untitled",
-        overview: item.overview || "",
-        posterPath: item.poster_path || "",
-        backdropPath: item.backdrop_path || "",
-        genres: (item.genre_ids || []).map((id) => ({ id, name: String(id) })),
-        releaseDate: item.release_date || item.first_air_date || "",
-        mediaType: item.media_type || "movie",
-        voteAverage: item.vote_average || 0,
-        voteCount: item.vote_count || 0,
-        popularity: item.popularity || 0,
-      }));
+      return topResults.map(item => this.mapListItemToDoc(item));
     } catch (error) {
       console.error("Genre search error:", error);
-      return [];
-    }
-  }
-  // Benzer Filmler
-  async getSimilarMovies(id) {
-    try {
-      const res = await tmdbAxios.get(`/movie/${id}/similar`);
-      // Gelen verileri veritabanı formatına uygun hale getirip döndürüyoruz
-      return this.saveMoviesToDB(res.data.results);
-    } catch (error) {
-      console.warn(`Similar movies error for ID ${id}:`, error.message);
-      // Hata olursa boş dizi dön ki frontend patlamasın
       return [];
     }
   }

@@ -47,7 +47,7 @@ const Home = () => {
 
       setData({
         hero: isAuthenticated ? trendingData[0] : null,
-        trending: trendingData.slice(1, 21),
+        trending: trendingData.slice(0, 21),
         popular: isAuthenticated ? responses[1]?.data.data.slice(0, 20) : [],
         topRated: isAuthenticated ? responses[2]?.data.data.slice(0, 20) : [],
         series: isAuthenticated ? responses[3]?.data.data.slice(0, 20) : [],
@@ -344,12 +344,7 @@ const Home = () => {
             linkTo="/category/trending" // Trendler sayfası için
         />
         
-        <MovieRow 
-            title="Popüler Filmler" 
-            movies={data.popular} 
-            size="large" 
-            linkTo="/category/popular" // Popüler sayfası için
-        />
+      
         
         <MovieRow 
             title="En İyi Puanlananlar" 
